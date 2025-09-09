@@ -1,20 +1,20 @@
 # File: grpc-td-helloworld.yaml
 #
-# This file defines the necessary Kubernetes and Google Cloud resources to
-# deploy a gRPC service and expose it via a regional external gRPC load balancer.
+# This corrected file uses the proper API versions for the GKE Gateway API
+# resources to create a regional external gRPC load balancer.
 #
 # The overall flow is:
 # 1. Deployment: The pod that runs the gRPC server.
 # 2. Service: A Kubernetes Service that exposes the Deployment and creates a
 #    Network Endpoint Group (NEG) with the 'cloud.google.com/neg' annotation.
-# 3. HealthCheck: A gRPC-specific health check for the load balancer.
-# 4. BackendService: A Google Cloud BackendService that uses the NEG as its
+# 3. GcpGateway: The GKE Gateway resource that provisions the public IP address
+#    and creates the regional external load balancer.
+# 4. GRPCRoute: The routing object that connects the Gateway to the backend service.
+# 5. BackendService: A Google Cloud BackendService that uses the NEG as its
 #    backend and the HealthCheck to monitor its health.
-# 5. UrlMap: A Google Cloud URL Map that routes traffic to the BackendService.
-# 6. TargetGrpcProxy: The proxy that uses the UrlMap.
-# 7. ForwardingRule: The public-facing IP and port that directs traffic to the
-#    TargetGrpcProxy.
+# 6. HealthCheck: A gRPC-specific health check for the load balancer.
 
+---
 # 1. Deployment for the gRPC server
 apiVersion: apps/v1
 kind: Deployment
@@ -44,11 +44,9 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: helloworld
+  name: helloworld-service
   annotations:
     # This annotation creates a standalone NEG.
-    # The NEG will contain endpoints for the pods selected by this service.
-    # The exposed_ports map the service port to a name for the NEG.
     cloud.google.com/neg: '{"exposed_ports":{"8080":{"name": "example-grpc-server"}}}'
 spec:
   ports:
@@ -61,10 +59,52 @@ spec:
   type: ClusterIP
 
 ---
-# 3. Health Check for the gRPC service
+# 3. GcpGateway for the regional external load balancer
+# This is a GKE Gateway API resource that provisions the load balancer.
+apiVersion: networking.gke.io/v1beta1
+kind: GcpGateway
+metadata:
+  name: helloworld-gateway
+spec:
+  gatewayType: REGIONAL_EXTERNAL_MANAGED
+  ports:
+  - port: 443
+
+---
+# 4. GRPCRoute to define the routing from the Gateway to the BackendService
+apiVersion: networking.k8s.io/v1beta1
+kind: GRPCRoute
+metadata:
+  name: helloworld-grpc-route
+spec:
+  parentRefs:
+  - name: helloworld-gateway
+  hostnames:
+  - "your-domain.com" # Replace with your actual domain
+  rules:
+  - backendRefs:
+    - name: helloworld-grpc-backend-service
+      port: 8080
+
+---
+# 5. Backend Service for the gRPC load balancer
+apiVersion: networking.gke.io/v1beta1
+kind: BackendService
+metadata:
+  name: helloworld-grpc-backend-service
+spec:
+  backends:
+  - neg: helloworld-service
+  healthCheck: helloworld-grpc-health-check
+  loadBalancingScheme: EXTERNAL_MANAGED
+  protocol: GRPC
+  timeoutSec: 30
+
+---
+# 6. Health Check for the gRPC service
 # This is a gRPC health check that targets the gRPC service on its
 # containerPort (50051).
-apiVersion: v1
+apiVersion: networking.gke.io/v1beta1
 kind: HealthCheck
 metadata:
   name: helloworld-grpc-health-check
@@ -75,62 +115,3 @@ spec:
   unhealthyThreshold: 10
   grpcHealthCheck:
     port: 50051
-
----
-# 4. Backend Service for the gRPC load balancer
-# The BackendService links the HealthCheck to the NEG.
-# It's configured for gRPC traffic and uses the EXTERNAL_MANAGED scheme.
-apiVersion: v1
-kind: BackendService
-metadata:
-  name: helloworld-grpc-backend
-spec:
-  loadBalancingScheme: EXTERNAL_MANAGED
-  protocol: GRPC
-  backends:
-    - balancingMode: RATE
-      group: '{"cloud.google.com/neg/exposed-port": 8080}'
-  healthChecks:
-    - '{{ .metadata.name }}' # Placeholder for the health check resource
-  timeoutSec: 30
-
----
-# 5. URL Map to route traffic to the Backend Service
-# The URL map is used by the proxy to direct requests to the correct backend.
-# Since it's a gRPC load balancer, we simply route all traffic to our single backend service.
-apiVersion: v1
-kind: UrlMap
-metadata:
-  name: helloworld-grpc-urlmap
-spec:
-  defaultService: '{{ .metadata.name }}' # Placeholder for the backend service resource
-
----
-# 6. Target gRPC Proxy
-# The TargetProxy is the L7 proxy that points to the URL map.
-apiVersion: v1
-kind: TargetGrpcProxy
-metadata:
-  name: helloworld-grpc-proxy
-spec:
-  urlMap: '{{ .metadata.name }}' # Placeholder for the URL map resource
-
----
-# 7. Forwarding Rule (Frontend)
-# This is the public-facing component of the load balancer. It defines the IP,
-# port (typically 443 for TLS), and directs traffic to the TargetProxy.
-apiVersion: v1
-kind: ForwardingRule
-metadata:
-  name: helloworld-grpc-forwarding-rule
-spec:
-  loadBalancingScheme: EXTERNAL_MANAGED
-  target: '{{ .metadata.name }}' # Placeholder for the TargetProxy resource
-  ports:
-    - "443"
-  ipProtocol: TCP
-  backendService: '{{ .metadata.name }}' # Placeholder for the backend service resource
-  subnetwork: # Placeholder for your subnetwork
-  ipAddress: # Placeholder for your reserved IP address
-
----
