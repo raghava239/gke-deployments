@@ -1,0 +1,136 @@
+# File: grpc-td-helloworld.yaml
+#
+# This file defines the necessary Kubernetes and Google Cloud resources to
+# deploy a gRPC service and expose it via a regional external gRPC load balancer.
+#
+# The overall flow is:
+# 1. Deployment: The pod that runs the gRPC server.
+# 2. Service: A Kubernetes Service that exposes the Deployment and creates a
+#    Network Endpoint Group (NEG) with the 'cloud.google.com/neg' annotation.
+# 3. HealthCheck: A gRPC-specific health check for the load balancer.
+# 4. BackendService: A Google Cloud BackendService that uses the NEG as its
+#    backend and the HealthCheck to monitor its health.
+# 5. UrlMap: A Google Cloud URL Map that routes traffic to the BackendService.
+# 6. TargetGrpcProxy: The proxy that uses the UrlMap.
+# 7. ForwardingRule: The public-facing IP and port that directs traffic to the
+#    TargetGrpcProxy.
+
+# 1. Deployment for the gRPC server
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    run: app1
+  name: app1
+spec:
+  selector:
+    matchLabels:
+      run: app1
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        run: app1
+    spec:
+      containers:
+      - image: grpc/java-example-hostname:1.50.2
+        name: app1
+        ports:
+        - protocol: TCP
+          containerPort: 50051
+
+---
+# 2. Service that creates the Network Endpoint Group (NEG)
+apiVersion: v1
+kind: Service
+metadata:
+  name: helloworld
+  annotations:
+    # This annotation creates a standalone NEG.
+    # The NEG will contain endpoints for the pods selected by this service.
+    # The exposed_ports map the service port to a name for the NEG.
+    cloud.google.com/neg: '{"exposed_ports":{"8080":{"name": "example-grpc-server"}}}'
+spec:
+  ports:
+  - port: 8080
+    name: helloworld
+    protocol: TCP
+    targetPort: 50051
+  selector:
+    run: app1
+  type: ClusterIP
+
+---
+# 3. Health Check for the gRPC service
+# This is a gRPC health check that targets the gRPC service on its
+# containerPort (50051).
+apiVersion: v1
+kind: HealthCheck
+metadata:
+  name: helloworld-grpc-health-check
+spec:
+  checkIntervalSec: 5
+  timeoutSec: 5
+  healthyThreshold: 2
+  unhealthyThreshold: 10
+  grpcHealthCheck:
+    port: 50051
+
+---
+# 4. Backend Service for the gRPC load balancer
+# The BackendService links the HealthCheck to the NEG.
+# It's configured for gRPC traffic and uses the EXTERNAL_MANAGED scheme.
+apiVersion: v1
+kind: BackendService
+metadata:
+  name: helloworld-grpc-backend
+spec:
+  loadBalancingScheme: EXTERNAL_MANAGED
+  protocol: GRPC
+  backends:
+    - balancingMode: RATE
+      group: '{"cloud.google.com/neg/exposed-port": 8080}'
+  healthChecks:
+    - '{{ .metadata.name }}' # Placeholder for the health check resource
+  timeoutSec: 30
+
+---
+# 5. URL Map to route traffic to the Backend Service
+# The URL map is used by the proxy to direct requests to the correct backend.
+# Since it's a gRPC load balancer, we simply route all traffic to our single backend service.
+apiVersion: v1
+kind: UrlMap
+metadata:
+  name: helloworld-grpc-urlmap
+spec:
+  defaultService: '{{ .metadata.name }}' # Placeholder for the backend service resource
+
+---
+# 6. Target gRPC Proxy
+# The TargetProxy is the L7 proxy that points to the URL map.
+apiVersion: v1
+kind: TargetGrpcProxy
+metadata:
+  name: helloworld-grpc-proxy
+spec:
+  urlMap: '{{ .metadata.name }}' # Placeholder for the URL map resource
+
+---
+# 7. Forwarding Rule (Frontend)
+# This is the public-facing component of the load balancer. It defines the IP,
+# port (typically 443 for TLS), and directs traffic to the TargetProxy.
+apiVersion: v1
+kind: ForwardingRule
+metadata:
+  name: helloworld-grpc-forwarding-rule
+spec:
+  loadBalancingScheme: EXTERNAL_MANAGED
+  target: '{{ .metadata.name }}' # Placeholder for the TargetProxy resource
+  ports:
+    - "443"
+  ipProtocol: TCP
+  backendService: '{{ .metadata.name }}' # Placeholder for the backend service resource
+  subnetwork: # Placeholder for your subnetwork
+  ipAddress: # Placeholder for your reserved IP address
+
+---
