@@ -56,7 +56,7 @@ metadata:
     # kubernetes.io/ingress.regional-static-ip-name: "your-static-ip-name"
 spec:
   rules:
-  - host: helloworld.example.com
+  - host: helloworld.gcpcloudtest.net
     http:
       paths:
       - path: /
