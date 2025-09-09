@@ -1,10 +1,10 @@
 # This manifest defines a Deployment, Service, BackendConfig, and Ingress
 # to expose a gRPC service via a GKE external Application Load Balancer.
-# It uses a separate HTTP endpoint for the load balancer's health checks.
+# The Ingress is now configured to serve traffic directly from the load balancer's IP.
 
 ---
 # 1. Deployment: Defines the gRPC application.
-# The container will need to expose an additional port for HTTP health checks.
+# The container must expose two ports for gRPC and HTTP health checks.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,13 +29,12 @@ spec:
         - protocol: TCP
           containerPort: 50051
         # Additional port for the HTTP health check endpoint.
-        # Your gRPC application must be configured to serve a simple HTTP response on this port.
         - protocol: TCP
           containerPort: 8080
 ---
 # 2. Service: Exposes the gRPC pods with two ports.
-# The primary port (8080) is for the load balancer, and the secondary (8081)
-# is the dedicated health check port that links to the BackendConfig.
+# The primary port (8080) is for the load balancer's gRPC traffic, and the secondary (8081)
+# is the dedicated health check port.
 apiVersion: v1
 kind: Service
 metadata:
@@ -60,7 +59,7 @@ spec:
   type: NodePort
 ---
 # 3. BackendConfig: Custom Resource for GKE Load Balancer Health Check.
-# This is the key change. We now use an HTTP health check.
+# The health check is configured to use the HTTP protocol on the dedicated port.
 apiVersion: cloud.google.com/v1
 kind: BackendConfig
 metadata:
@@ -71,13 +70,12 @@ spec:
     timeoutSec: 5
     healthyThreshold: 2
     unhealthyThreshold: 10
-    # The health check type is now HTTP, which is a supported protocol.
     type: HTTP
-    # This port must match the dedicated health check port in the Service.
     port: 8081
     requestPath: /
 ---
 # 4. Ingress: Provisions the external Application Load Balancer.
+# This version serves traffic directly from the load balancer's IP address.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -85,8 +83,7 @@ metadata:
 spec:
   ingressClassName: gce
   rules:
-  - host: helloworld.gcpcloudtest.net
-    http:
+  - http:
       paths:
       - path: /*
         pathType: ImplementationSpecific
