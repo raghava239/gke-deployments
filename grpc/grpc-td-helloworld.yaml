@@ -1,10 +1,10 @@
-# This is the corrected manifest, addressing the deprecation warning.
-# All resources (Deployment, Service, BackendConfig, and Ingress) are
-# combined into a single file for easy deployment.
+# This manifest defines a Deployment, Service, BackendConfig, and Ingress
+# to expose a gRPC service via a GKE external Application Load Balancer.
+# It uses a separate HTTP endpoint for the load balancer's health checks.
 
 ---
 # 1. Deployment: Defines the gRPC application.
-# It uses a sample gRPC image and exposes containerPort 50051.
+# The container will need to expose an additional port for HTTP health checks.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,33 +25,42 @@ spec:
       - image: grpc/java-example-hostname:1.50.2
         name: app1
         ports:
+        # Port for the gRPC service.
         - protocol: TCP
           containerPort: 50051
+        # Additional port for the HTTP health check endpoint.
+        # Your gRPC application must be configured to serve a simple HTTP response on this port.
+        - protocol: TCP
+          containerPort: 8080
 ---
-# 2. Service: Exposes the gRPC pods to the cluster.
-# The `app_protocol` annotation is critical for GKE to recognize this as a gRPC service.
+# 2. Service: Exposes the gRPC pods with two ports.
+# The primary port (8080) is for the load balancer, and the secondary (8081)
+# is the dedicated health check port that links to the BackendConfig.
 apiVersion: v1
 kind: Service
 metadata:
   name: helloworld
   annotations:
-    # This annotation links the service to the BackendConfig for health check configuration.
+    # This annotation links the primary service port (8080) to the BackendConfig.
     cloud.google.com/backend-config: '{"ports": {"8080":"grpc-backend-config"}}'
-    # Specify HTTP2 as the application protocol for gRPC.
-    cloud.google.com/app-protocols: '{"helloworld":"HTTP2"}'
+    # Specify HTTP2 as the application protocol for gRPC traffic.
+    cloud.google.com/app-protocols: '{"helloworld-grpc":"HTTP2"}'
 spec:
   ports:
   - port: 8080
-    name: helloworld
+    name: helloworld-grpc
     protocol: TCP
     targetPort: 50051
+  - port: 8081
+    name: helloworld-healthcheck
+    protocol: TCP
+    targetPort: 8080
   selector:
     run: app1
   type: NodePort
 ---
 # 3. BackendConfig: Custom Resource for GKE Load Balancer Health Check.
-# This resource configures the load balancer's health check to use the gRPC protocol,
-# which is required for it to properly route traffic.
+# This is the key change. We now use an HTTP health check.
 apiVersion: cloud.google.com/v1
 kind: BackendConfig
 metadata:
@@ -62,18 +71,18 @@ spec:
     timeoutSec: 5
     healthyThreshold: 2
     unhealthyThreshold: 10
-    type: GRPC
-    port: 50051
+    # The health check type is now HTTP, which is a supported protocol.
+    type: HTTP
+    # This port must match the dedicated health check port in the Service.
+    port: 8081
+    requestPath: /
 ---
 # 4. Ingress: Provisions the external Application Load Balancer.
-# This version uses the corrected `ingressClassName` field.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: helloworld-ingress
 spec:
-  # This is the corrected field that replaces the deprecated annotation.
-  # "gce" is the default Ingress class for a Google Cloud load balancer.
   ingressClassName: gce
   rules:
   - host: helloworld.gcpcloudtest.net
@@ -85,4 +94,4 @@ spec:
           service:
             name: helloworld
             port:
-              name: helloworld
+              name: helloworld-grpc
