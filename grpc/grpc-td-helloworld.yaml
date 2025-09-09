@@ -1,27 +1,17 @@
 # File: grpc-td-helloworld.yaml
 #
 # This corrected file uses the proper API versions for the GKE Gateway API
-# resources to create a regional external gRPC load balancer.
-#
-# The overall flow is:
-# 1. Deployment: The pod that runs the gRPC server.
-# 2. Service: A Kubernetes Service that exposes the Deployment and creates a
-#    Network Endpoint Group (NEG) with the 'cloud.google.com/neg' annotation.
-# 3. GcpGateway: The GKE Gateway resource that provisions the public IP address
-#    and creates the regional external load balancer.
-# 4. GRPCRoute: The routing object that connects the Gateway to the backend service.
-# 5. BackendService: A Google Cloud BackendService that uses the NEG as its
-#    backend and the HealthCheck to monitor its health.
-# 6. HealthCheck: A gRPC-specific health check for the load balancer.
+# resources and explicitly specifies the 'default' namespace for all objects.
 
 ---
 # 1. Deployment for the gRPC server
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: app1
+  namespace: default
   labels:
     run: app1
-  name: app1
 spec:
   selector:
     matchLabels:
@@ -45,6 +35,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: helloworld-service
+  namespace: default
   annotations:
     # This annotation creates a standalone NEG.
     cloud.google.com/neg: '{"exposed_ports":{"8080":{"name": "example-grpc-server"}}}'
@@ -60,11 +51,11 @@ spec:
 
 ---
 # 3. GcpGateway for the regional external load balancer
-# This is a GKE Gateway API resource that provisions the load balancer.
 apiVersion: networking.gke.io/v1beta1
 kind: GcpGateway
 metadata:
   name: helloworld-gateway
+  namespace: default
 spec:
   gatewayType: REGIONAL_EXTERNAL_MANAGED
   ports:
@@ -76,9 +67,11 @@ apiVersion: networking.k8s.io/v1beta1
 kind: GRPCRoute
 metadata:
   name: helloworld-grpc-route
+  namespace: default
 spec:
   parentRefs:
   - name: helloworld-gateway
+    namespace: default # Important: reference the gateway in the same namespace
   hostnames:
   - "your-domain.com" # Replace with your actual domain
   rules:
@@ -92,6 +85,7 @@ apiVersion: networking.gke.io/v1beta1
 kind: BackendService
 metadata:
   name: helloworld-grpc-backend-service
+  namespace: default
 spec:
   backends:
   - neg: helloworld-service
@@ -102,12 +96,11 @@ spec:
 
 ---
 # 6. Health Check for the gRPC service
-# This is a gRPC health check that targets the gRPC service on its
-# containerPort (50051).
 apiVersion: networking.gke.io/v1beta1
 kind: HealthCheck
 metadata:
   name: helloworld-grpc-health-check
+  namespace: default
 spec:
   checkIntervalSec: 5
   timeoutSec: 5
