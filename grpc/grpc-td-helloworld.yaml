@@ -1,4 +1,9 @@
-# deployment.yaml
+# This Kubernetes manifest combines the Deployment, Service, BackendConfig,
+# and Ingress resources into a single file for easy deployment.
+
+---
+# 1. Deployment: Defines the gRPC application.
+# It uses a sample gRPC image and exposes containerPort 50051.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -22,14 +27,17 @@ spec:
         - protocol: TCP
           containerPort: 50051
 ---
-# service.yaml
+# 2. Service: Exposes the gRPC pods to the cluster.
+# The `app_protocol` annotation is critical for GKE to recognize this as a gRPC service.
 apiVersion: v1
 kind: Service
 metadata:
   name: helloworld
-  # The GKE Ingress controller automatically handles NEGs, so this annotation is
-  # not required for this configuration.
-  # cloud.google.com/neg: '{"exposed_ports":{"8080":{"name": "example-grpc-server"}}}'
+  annotations:
+    # This annotation links the service to the BackendConfig for health check configuration.
+    cloud.google.com/backend-config: '{"ports": {"8080":"grpc-backend-config"}}'
+    # Specify HTTP2 as the application protocol for gRPC.
+    cloud.google.com/app-protocols: '{"helloworld":"HTTP2"}'
 spec:
   ports:
   - port: 8080
@@ -38,31 +46,44 @@ spec:
     targetPort: 50051
   selector:
     run: app1
-  # The type is set to NodePort, which is required for the GKE Ingress controller
-  # to expose the service to the external load balancer.
   type: NodePort
 ---
-# ingress.yaml
+# 3. BackendConfig: Custom Resource for GKE Load Balancer Health Check.
+# This resource configures the load balancer's health check to use the gRPC protocol,
+# which is required for it to properly route traffic.
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: grpc-backend-config
+spec:
+  healthCheck:
+    checkIntervalSec: 5
+    timeoutSec: 5
+    healthyThreshold: 2
+    unhealthyThreshold: 10
+    type: GRPC
+    port: 50051
+---
+# 4. Ingress: Provisions the external Application Load Balancer.
+# It uses the `gce` ingress class and routes traffic to the 'helloworld' service.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: helloworld-ingress
   annotations:
-    # This annotation explicitly tells GKE to provision a regional external
-    # Application Load Balancer. This is the key to getting your load balancer.
-    kubernetes.io/ingress.class: "gce-regional-ingress"
-    # Optional: If you have a static IP address, you can reference it here
-    # to avoid having a new IP assigned to the load balancer on creation.
-    # kubernetes.io/ingress.regional-static-ip-name: "your-static-ip-name"
+    # Use the GCE ingress controller to provision a load balancer.
+    kubernetes.io/ingress.class: "gce"
+    # Optional: Reserve a static IP address for the load balancer.
+    # kubernetes.io/ingress.global-static-ip-name: "your-static-ip-name"
 spec:
   rules:
   - host: helloworld.gcpcloudtest.net
     http:
       paths:
-      - path: /
-        pathType: Prefix
+      - path: /*
+        pathType: ImplementationSpecific
         backend:
           service:
             name: helloworld
             port:
-              number: 8080
+              name: helloworld
