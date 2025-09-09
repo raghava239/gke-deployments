@@ -1,37 +1,9 @@
-# deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  labels:
-    run: app1
-  name: app1
-spec:
-  selector:
-    matchLabels:
-      run: app1
-  replicas: 2
-  template:
-    metadata:
-      labels:
-        run: app1
-    spec:
-      containers:
-      - image: grpc/java-example-hostname:1.50.2
-        name: app1
-        ports:
-        - protocol: TCP
-          containerPort: 50051
 ---
-# service.yaml
+# service.yaml (Simplified)
 apiVersion: v1
 kind: Service
 metadata:
   name: helloworld
-  annotations:
-    # The NEG annotation is only needed if you are manually setting up the load balancer.
-    # The GKE Ingress controller handles this automatically.
-    # You can remove this annotation, or keep it, as it will likely be ignored by the Ingress controller.
-    cloud.google.com/neg: '{"exposed_ports":{"8080":{"name": "example-grpc-server"}}}'
 spec:
   ports:
   - port: 8080
@@ -40,20 +12,15 @@ spec:
     targetPort: 50051
   selector:
     run: app1
-  # The type is changed to NodePort for Ingress to work.
   type: NodePort
 ---
-# ingress.yaml
+# ingress.yaml (Simplified)
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: helloworld-ingress
   annotations:
-    # This annotation provisions a regional external Application Load Balancer.
     kubernetes.io/ingress.class: "gce-regional-ingress"
-    # Optional: Reserve a static IP address in Google Cloud and reference it here.
-    # Otherwise, an ephemeral IP will be assigned.
-    # kubernetes.io/ingress.regional-static-ip-name: "your-static-ip-name"
 spec:
   rules:
   - host: helloworld.gcpcloudtest.net
