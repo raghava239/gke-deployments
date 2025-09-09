@@ -1,6 +1,5 @@
-# This manifest defines a Deployment, Service, BackendConfig, and Ingress
-# to expose a gRPC service via a GKE external Application Load Balancer.
-# The Ingress is now configured to serve traffic directly from the load balancer's IP.
+# This is the final, corrected manifest, ensuring all resources
+# are properly configured to work with a GKE Application Load Balancer.
 
 ---
 # 1. Deployment: Defines the gRPC application.
@@ -25,22 +24,23 @@ spec:
       - image: grpc/java-example-hostname:1.50.2
         name: app1
         ports:
-        # Port for the gRPC service.
+        # Port for the gRPC service (e.g., traffic on port 50051)
         - protocol: TCP
           containerPort: 50051
-        # Additional port for the HTTP health check endpoint.
+        # Additional port for the HTTP health check endpoint (e.g., health check on port 8080)
+        # Your application must serve a simple HTTP response on this port.
         - protocol: TCP
           containerPort: 8080
 ---
 # 2. Service: Exposes the gRPC pods with two ports.
-# The primary port (8080) is for the load balancer's gRPC traffic, and the secondary (8081)
-# is the dedicated health check port.
+# It links the primary service port to the BackendConfig and defines
+# the application protocol for gRPC traffic.
 apiVersion: v1
 kind: Service
 metadata:
   name: helloworld
   annotations:
-    # This annotation links the primary service port (8080) to the BackendConfig.
+    # This annotation links the primary service port to the BackendConfig.
     cloud.google.com/backend-config: '{"ports": {"8080":"grpc-backend-config"}}'
     # Specify HTTP2 as the application protocol for gRPC traffic.
     cloud.google.com/app-protocols: '{"helloworld-grpc":"HTTP2"}'
@@ -59,7 +59,8 @@ spec:
   type: NodePort
 ---
 # 3. BackendConfig: Custom Resource for GKE Load Balancer Health Check.
-# The health check is configured to use the HTTP protocol on the dedicated port.
+# THIS IS THE CRITICAL PART. The health check is now of type HTTP,
+# which is supported by the external Application Load Balancer.
 apiVersion: cloud.google.com/v1
 kind: BackendConfig
 metadata:
@@ -75,7 +76,8 @@ spec:
     requestPath: /
 ---
 # 4. Ingress: Provisions the external Application Load Balancer.
-# This version serves traffic directly from the load balancer's IP address.
+# This version uses the modern `ingressClassName` field and a "catch-all" rule
+# that will route traffic directly from the load balancer's IP.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
