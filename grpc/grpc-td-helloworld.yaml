@@ -1,5 +1,6 @@
-# This Kubernetes manifest combines the Deployment, Service, BackendConfig,
-# and Ingress resources into a single file for easy deployment.
+# This is the corrected manifest, addressing the deprecation warning.
+# All resources (Deployment, Service, BackendConfig, and Ingress) are
+# combined into a single file for easy deployment.
 
 ---
 # 1. Deployment: Defines the gRPC application.
@@ -65,17 +66,15 @@ spec:
     port: 50051
 ---
 # 4. Ingress: Provisions the external Application Load Balancer.
-# It uses the `gce` ingress class and routes traffic to the 'helloworld' service.
+# This version uses the corrected `ingressClassName` field.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: helloworld-ingress
-  annotations:
-    # Use the GCE ingress controller to provision a load balancer.
-    kubernetes.io/ingress.class: "gce"
-    # Optional: Reserve a static IP address for the load balancer.
-    # kubernetes.io/ingress.global-static-ip-name: "your-static-ip-name"
 spec:
+  # This is the corrected field that replaces the deprecated annotation.
+  # "gce" is the default Ingress class for a Google Cloud load balancer.
+  ingressClassName: gce
   rules:
   - host: helloworld.gcpcloudtest.net
     http:
